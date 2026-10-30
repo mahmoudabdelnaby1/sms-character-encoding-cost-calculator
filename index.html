@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMS Character Encoding & Multi-Part Cost Calculator</title>
+<style>
+  :root { --primary: #0284c7; --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --text: #0f172a; --danger: #ef4444; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 2rem 1rem; margin: 0; }
+  .container { max-width: 750px; margin: 0 auto; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+  h1 { font-size: 1.5rem; margin-top: 0; }
+  textarea { width: 100%; box-sizing: border-box; height: 130px; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; font-family: inherit; resize: vertical; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+  .stat-card { background: #f1f5f9; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: center; }
+  .stat-val { font-size: 1.5rem; font-weight: 700; color: var(--primary); }
+  .stat-lbl { font-size: 0.75rem; color: #64748b; font-weight: 600; text-transform: uppercase; margin-top: 0.25rem; }
+  .badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 700; font-size: 0.85rem; }
+  .badge-gsm { background: #dcfce7; color: #15803d; }
+  .badge-ucs2 { background: #fee2e2; color: #b91c1c; }
+  .config-row { display: flex; gap: 1rem; margin-top: 1rem; align-items: center; flex-wrap: wrap; }
+  select, input { padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; }
+  .alert-banner { background: #fffbeb; border: 1px solid #fef3c7; color: #92400e; padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.85rem; margin-top: 1rem; display: none; }
+  .disclaimer { font-size: 0.75rem; color: #94a3b8; margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>SMS Character Encoding & Cost Calculator</h1>
+  <p style="font-size: 0.875rem; color: #64748b;">Audits 3GPP GSM 03.38 basic/extension characters (| ^ € { } [ ] ~ \) vs UCS-2 / UTF-16 Unicode segmentation. Characters outside the Basic Multilingual Plane (such as emojis) require 2 UTF-16 code units (surrogate pairs). Total cost is calculated strictly from your user-specified segment rate.</p>
+
+  <textarea id="smsText" placeholder="اكتب نص الرسالة هنا أو Type your message here...">عزيزي العميل، تم تجهيز طلبك رقم [4821] بنجاح وسيتم تسليمه غداً 🚀.</textarea>
+
+  <div class="config-row">
+    <label style="font-size: 0.875rem; font-weight: 600;">Custom Unit Rate per Segment:</label>
+    <input type="number" id="unitRate" value="0.05" step="0.01" style="width: 90px;">
+    <select id="currency">
+      <option value="USD">USD</option>
+      <option value="SAR">SAR</option>
+      <option value="AED">AED</option>
+      <option value="EGP">EGP</option>
+      <option value="EUR">EUR</option>
+    </select>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-val" id="charCount">0</div>
+      <div class="stat-lbl">Characters (Raw)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="weightedUnits">0</div>
+      <div class="stat-lbl">UTF-16 / Billed Units</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="encodingBadge"><span class="badge badge-gsm">GSM-7</span></div>
+      <div class="stat-lbl">Encoding</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="segmentCount">1</div>
+      <div class="stat-lbl">Segments</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="totalCost">0.05</div>
+      <div class="stat-lbl" id="costLabel">Total Cost (USD)</div>
+    </div>
+  </div>
+
+  <div class="alert-banner" id="ucsAlert">
+    ⚠️ <strong>UCS-2 (Unicode) Encoding Active:</strong> Non-GSM characters (such as Arabic or emojis) require 16-bit encoding, reducing capacity to 70 units for single messages and 67 units per segment for concatenated messages. Emojis outside the BMP require 2 UTF-16 code units (surrogate pairs).
+  </div>
+
+  <div class="disclaimer">
+    * Standard GSM 03.38 extension characters (| ^ € { } [ ] ~ \) count as 2 units each. Characters outside the Basic Multilingual Plane (> U+FFFF, such as emojis) require a surrogate pair (2 units in UTF-16/UCS-2). Cost equals (segments × custom rate).
+  </div>
+</div>
+
+<script>
+const GSM_BASIC = new Set("@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ !\"#¤%&\'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ`¿abcdefghijklmnopqrstuvwxyzäöñüà");
+const GSM_EXTENDED = new Set("|^€{}[~]\\");
+
+function calculateSms() {
+  const text = document.getElementById('smsText').value;
+  const rate = parseFloat(document.getElementById('unitRate').value) || 0.0;
+  const curr = document.getElementById('currency').value;
+  
+  // Unicode character count (handling surrogate pairs as 1 visual character)
+  const unicodeChars = Array.from(text).length;
+  // UTF-16 code units (where characters > U+FFFF count as 2 units)
+  const utf16Units = text.length;
+  
+  let isUcs2 = false;
+  let weightedUnits = 0;
+  let extCount = 0;
+  let hasSurrogates = false;
+  
+  for (let c of text) {
+    const cp = c.codePointAt(0);
+    if (cp > 0xFFFF) {
+      hasSurrogates = true;
+      isUcs2 = true;
+    } else if (GSM_EXTENDED.has(c)) {
+      extCount++;
+      weightedUnits += 2;
+    } else if (GSM_BASIC.has(c)) {
+      weightedUnits += 1;
+    } else {
+      isUcs2 = true;
+    }
+  }
+  
+  let segments = 0;
+  let finalUnits = isUcs2 ? utf16Units : weightedUnits;
+  
+  if (unicodeChars > 0) {
+    if (!isUcs2) {
+      segments = weightedUnits <= 160 ? 1 : Math.ceil(weightedUnits / 153);
+    } else {
+      segments = utf16Units <= 70 ? 1 : Math.ceil(utf16Units / 67);
+    }
+  }
+  
+  const total = (segments * rate).toFixed(4);
+  
+  document.getElementById('charCount').innerText = unicodeChars;
+  document.getElementById('weightedUnits').innerText = finalUnits;
+  document.getElementById('segmentCount').innerText = segments;
+  document.getElementById('totalCost').innerText = total;
+  document.getElementById('costLabel').innerText = `Total Cost (${curr})`;
+  
+  const badgeEl = document.getElementById('encodingBadge');
+  const alertEl = document.getElementById('ucsAlert');
+  if (isUcs2) {
+    badgeEl.innerHTML = '<span class="badge badge-ucs2">UCS-2</span>';
+    alertEl.style.display = 'block';
+  } else {
+    badgeEl.innerHTML = '<span class="badge badge-gsm">GSM-7</span>';
+    alertEl.style.display = 'none';
+  }
+}
+
+document.getElementById('smsText').addEventListener('input', calculateSms);
+document.getElementById('unitRate').addEventListener('input', calculateSms);
+document.getElementById('currency').addEventListener('change', calculateSms);
+calculateSms();
+</script>
+</body>
+</html>

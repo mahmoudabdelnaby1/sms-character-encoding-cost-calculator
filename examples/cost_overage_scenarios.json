@@ -1,0 +1,8 @@
+{
+  "overage_example": {
+    "text": "مرحباً بكم في متجرنا الإلكتروني بمناسبة إطلاق التشكيلة الجديدة من العطور الفاخرة لعام 2026",
+    "characters": 89,
+    "segments_billed": 2,
+    "waste_percentage": "100% cost increase due to 19 extra characters"
+  }
+}
